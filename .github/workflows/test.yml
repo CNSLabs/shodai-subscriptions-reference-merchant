@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  merchant:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SHODAI_API_KEY: test-only
+      OPERATOR_PASSWORD: test-operator-password-with-enough-length
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: CNSLabs/agreements-api-sdk
+          ref: 75d50f2f44c80258c12b011b03a4d40b9fdce24d
+          path: .sdk
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build the matching subscription SDK
+        run: |
+          npm --prefix .sdk/packages/agreements-api-client install --ignore-scripts --no-package-lock
+          npm --prefix .sdk/packages/agreements-api-client run build
+          npm pack ./.sdk/packages/agreements-api-client --pack-destination "$RUNNER_TEMP" --ignore-scripts
+      - run: npm install --no-save --package-lock=false "$RUNNER_TEMP/shodai-network-agreements-api-client-0.7.0.tgz"
+      - run: npm run build
+      - run: npm test

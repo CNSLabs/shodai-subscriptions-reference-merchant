@@ -1,0 +1,28 @@
+{
+  "name": "shodai-subscriptions-reference-merchant",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --env-file=.env --import tsx src/server.ts",
+    "test": "tsx --test test/*.test.ts",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@shodai-network/agreements-api-client": "0.7.0",
+    "@x402/core": "2.23.0",
+    "@x402/extensions": "2.23.0",
+    "express": "5.1.0",
+    "mongodb": "^6.20.0",
+    "viem": "2.43.2"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "^24.3.0",
+    "mongodb-memory-server-core": "11.2.0",
+    "tsx": "4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
