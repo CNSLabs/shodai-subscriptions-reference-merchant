@@ -8,7 +8,7 @@ import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from '@x402
 import { createSIWxPayload, encodeSIWxHeader, type SIWxExtension } from '@x402/extensions/sign-in-with-x';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { createApp } from '../src/app.js';
-import { Merchant, type SubscriptionView } from '../src/merchant.js';
+import { coversNow, hasAccess, Merchant, type SubscriptionView } from '../src/merchant.js';
 import { connectStore, type Store } from '../src/store.js';
 
 const wallet = privateKeyToAccount(generatePrivateKey());
@@ -139,6 +139,61 @@ async function requestPayment(header: string, id: string, required: Awaited<Retu
   return fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header, 'PAYMENT-SIGNATURE': paymentHeader(id, required) } });
 }
 
+test('access uses a fixed renewal grace without extending confirmed coverage', () => {
+  const startsAt = Date.parse('2026-10-21T12:00:00Z');
+  const endsAt = startsAt + 60_000;
+  const currentPeriod = { startsAt: new Date(startsAt).toISOString(), endsAt: new Date(endsAt).toISOString() };
+  for (const [renewalEnabled, at, expected] of [
+    [true, startsAt - 1, false], [true, startsAt, true], [true, endsAt - 1, true],
+    [true, endsAt, true], [true, endsAt + 59_999, true], [true, endsAt + 60_000, false],
+    [false, endsAt - 1, true], [false, endsAt, false], [null, endsAt, false],
+  ] as const) {
+    assert.equal(hasAccess({ currentPeriod, renewalEnabled }, at), expected, `${renewalEnabled} at ${at - endsAt}ms from expiry`);
+  }
+  assert.equal(hasAccess({ currentPeriod: null, renewalEnabled: true }, endsAt), false);
+  assert.equal(coversNow({ currentPeriod }, endsAt), false);
+  assert.equal(currentPeriod.endsAt, new Date(endsAt).toISOString());
+});
+
+test('renewal grace is shared by resource, status and operator views without collecting', async t => {
+  const now = Date.now();
+  const authorization = 'Basic ' + Buffer.from('operator:' + process.env.OPERATOR_PASSWORD).toString('base64');
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const subscription = seed('renewing');
+  subscription.currentPeriod = period(-90_000);
+  const endsAt = Date.parse(subscription.currentPeriod.endsAt);
+  const { header, required } = await proof();
+  for (const outcome of [null, 'pending', 'failed'] as const) {
+    payments.set(subscription.id, outcome ? [{
+      id: 'renewal', subscriptionId: subscription.id, kind: 'renewal', status: outcome,
+      attemptedAt: new Date(endsAt).toISOString(), resolvedAt: outcome === 'failed' ? new Date(now).toISOString() : null,
+      amount: terms.amount, asset: terms.asset, recipient, coveredPeriod: null, transactionHash: null,
+      failureReason: outcome === 'failed' ? 'Insufficient funds' : null,
+    }] : []);
+    const response = await requestPayment(header, subscription.id, required);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('payment-response'), null);
+    const status = await (await fetch(origin + '/subscriptions/status?subscriber=' + wallet.address)).json();
+    const list = await (await fetch(origin + '/admin/customers', { headers: { authorization } })).json();
+    const detail = await (await fetch(origin + '/admin/customers/' + wallet.address, { headers: { authorization } })).json();
+    for (const view of [status, list.customers[0], detail]) {
+      assert.equal(view.accessPaid, true);
+      assert.equal(view.paidThrough, String(Math.floor(endsAt / 1000)));
+    }
+    assert.equal(list.customers[0].latestCollection?.outcome ?? null, outcome);
+    assert.equal(paymentCalls, 0);
+  }
+  subscription.renewalEnabled = false;
+  assert.equal((await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } })).status, 402);
+  subscription.renewalEnabled = true;
+  t.mock.timers.setTime(endsAt + 60_000);
+  assert.equal((await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } })).status, 402);
+  assert.equal((await (await fetch(origin + '/subscriptions/status?subscriber=' + wallet.address)).json()).accessPaid, false);
+  assert.equal((await (await fetch(origin + '/admin/customers', { headers: { authorization } })).json()).customers[0].accessPaid, false);
+  assert.equal((await (await fetch(origin + '/admin/customers/' + wallet.address, { headers: { authorization } })).json()).accessPaid, false);
+  assert.equal(paymentCalls, 0);
+});
+
 test('Plan offer, buyer proof, setup bridge and confirmed access use the public SDK', async () => {
   const { header, required } = await proof();
   assert.equal(required.accepts[0].amount, terms.amount);
@@ -188,13 +243,18 @@ test('closed Plans preserve paid access, status and admitted unpaid continuation
   assert.equal(status.accessPaid, true);
 });
 
-test('retained paid coverage wins over newer unpaid setup and pagination completes', async () => {
-  seed('old-paid', true, new Date(Date.now() - 60_000).toISOString());
+test('paid coverage wins over grace, grace wins over unpaid setup, and pagination completes', async () => {
+  const paid = seed('old-paid', true, new Date(Date.now() - 60_000).toISOString());
+  const grace = seed('newer-grace');
+  grace.currentPeriod = period(-90_000);
   seed('new-unpaid', false);
   pageSize = 1;
   const { header } = await proof();
   const status = await (await fetch(origin + '/subscriptions/status?subscriber=' + wallet.address)).json();
   assert.equal(status.subscription.id, 'old-paid');
+  assert.equal((await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } })).status, 200);
+  paid.currentPeriod = period(-180_000);
+  assert.equal((await (await fetch(origin + '/subscriptions/status?subscriber=' + wallet.address)).json()).subscription.id, 'newer-grace');
   assert.equal((await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } })).status, 200);
   secondPageFailure = true;
   assert.equal((await fetch(origin + '/subscriptions/status?subscriber=' + wallet.address)).status, 503);
@@ -244,16 +304,19 @@ test('collection conflict rereads confirmed coverage', async () => {
   assert.equal(response.headers.get('payment-response'), null);
 });
 
-test('product denial does not request another payment', async () => {
-  seed('paid', true);
+test('product denial during paid coverage or grace does not request another payment', async () => {
+  const subscription = seed('paid', true);
   const { header } = await proof();
   const original = merchant.currentView.bind(merchant);
   merchant.currentView = async address => ({ ...await original(address), accessPaid: false }) as SubscriptionView;
   try {
-    const response = await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } });
-    assert.equal(response.status, 403);
-    assert.equal(response.headers.get('payment-required'), null);
-    assert.equal(paymentCalls, 0);
+    for (const offset of [0, -90_000]) {
+      subscription.currentPeriod = period(offset);
+      const response = await fetch(origin + '/subscriber-resource', { headers: { 'SIGN-IN-WITH-X': header } });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get('payment-required'), null);
+      assert.equal(paymentCalls, 0);
+    }
   } finally { merchant.currentView = original; }
 });
 

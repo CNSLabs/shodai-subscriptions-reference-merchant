@@ -4,6 +4,8 @@ A thin merchant for wallet-paid access to one protected resource. Shodai owns Pl
 
 ## Interfaces
 
+After a confirmed first payment, resource access continues for 60 seconds beyond the confirmed paid-through time while renewal remains enabled. Pending or failed renewals do not restart this allowance or change payment evidence. Canceled subscriptions receive only their remaining confirmed paid access. The dashboard's Active badge and buyer status use the same access decision; paid-through remains the confirmed period end.
+
 - `GET /subscriber-resource` serves paid customers or returns x402 offers and buyer authentication.
 - `POST /subscriptions/agent-wallet/setup` verifies the buyer and forwards setup to Shodai.
 - `GET /subscriptions/status` reads subscription facts and stored setup references.

@@ -73,7 +73,7 @@ async function listData() {
     const rows = sorted(data.customers);
     main.querySelector('#rows').innerHTML = rows.map(row => `<tr data-wallet="${escapeHtml(row.wallet)}">
       <td class="mono"><a href="?${new URLSearchParams({ ...Object.fromEntries(query()), wallet: row.wallet })}" data-wallet-link="${escapeHtml(row.wallet)}">${escapeHtml(row.wallet)}</a></td>
-      <td>${badge(row.accessPaid == null ? 'Pending' : row.accessPaid ? 'Paid' : 'No access', row.accessPaid ? 'active' : '')}</td>
+      <td>${badge(row.accessPaid == null ? 'Pending' : row.accessPaid ? 'Active' : 'No access', row.accessPaid ? 'active' : '')}</td>
       <td>${badge(row.renewalEnabled == null ? 'Pending' : row.renewalEnabled ? 'Enabled' : 'Stopped', row.renewalEnabled ? 'active' : '')}</td>
       <td>${paidThrough(row.paidThrough)}</td>
       <td>${row.latestCollection ? `${badge(row.latestCollection.outcome, row.latestCollection.outcome === 'failed' ? 'failed' : row.latestCollection.outcome === 'succeeded' ? 'active' : 'pending')} <span class="subtle">${stamp(row.latestCollection.attemptedAt)}</span>` : 'None'}</td>
@@ -125,7 +125,7 @@ async function detailData(wallet) {
     const message = main.querySelector('#detail-message'); message.hidden = true;
     main.querySelector('#detail-content').hidden = false;
     main.querySelector('#facts').innerHTML = [
-      ['Current access', badge(data.accessPaid == null ? 'Pending' : data.accessPaid ? 'Paid' : 'No access', data.accessPaid ? 'active' : '')],
+      ['Current access', badge(data.accessPaid == null ? 'Pending' : data.accessPaid ? 'Active' : 'No access', data.accessPaid ? 'active' : '')],
       ['Renewal', badge(data.renewalEnabled == null ? 'Pending' : data.renewalEnabled ? 'Enabled' : 'Stopped', data.renewalEnabled ? 'active' : '')],
       ['Paid through', escapeHtml(paidThrough(data.paidThrough))],
     ].map(([label, value]) => `<div class="fact"><div class="fact-label">${label}</div><div class="fact-value">${value}</div></div>`).join('');
