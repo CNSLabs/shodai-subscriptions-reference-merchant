@@ -7,7 +7,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import { AgreementsApiError } from '@shodai-network/agreements-api-client';
 import { formatUnits, getAddress, isAddress } from 'viem';
-import { coversNow, Merchant, type SubscriptionView } from './merchant.js';
+import { coversNow, hasAccess, Merchant, type SubscriptionView } from './merchant.js';
 import { siwxExtension, verifyWalletProof } from './wallet-proof.js';
 
 async function sendRequired(response: Response, origin: string, merchant: Merchant, wallet?: string): Promise<void> {
@@ -61,7 +61,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
       await merchant.store.customer(wallet);
       const view = await merchant.currentView(wallet);
       if (view?.accessPaid) return sendResource(response, wallet, view);
-      if (view && coversNow(view.subscription)) return response.status(403).json({ message: 'Product access is not available' });
+      if (view && hasAccess(view.subscription)) return response.status(403).json({ message: 'Product access is not available' });
       const header = request.header('PAYMENT-SIGNATURE');
       if (!header) return await sendRequired(response, origin, merchant, wallet);
       let payment: ReturnType<typeof decodePaymentSignatureHeader>;
@@ -78,7 +78,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
         if (error instanceof AgreementsApiError && error.status === 409) {
           const current = await merchant.currentView(wallet);
           if (current?.accessPaid) return sendResource(response, wallet, current);
-          if (current && coversNow(current.subscription)) return response.status(403).json({ message: 'Product access is not available' });
+          if (current && hasAccess(current.subscription)) return response.status(403).json({ message: 'Product access is not available' });
           return await sendRequired(response, origin, merchant, wallet);
         }
         if (error instanceof AgreementsApiError && error.status === 400) return response.status(400).json({ message: error.message });
@@ -93,7 +93,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
         }
         return sendResource(response, wallet, after);
       }
-      if (after && coversNow(after.subscription)) return response.status(403).json({ message: 'Product access is not available' });
+      if (after && hasAccess(after.subscription)) return response.status(403).json({ message: 'Product access is not available' });
       return await sendRequired(response, origin, merchant, wallet);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid or expired SIGN-IN-WITH-X')) return response.status(401).json({ message: error.message });

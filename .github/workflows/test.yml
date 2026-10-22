@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: CNSLabs/agreements-api-sdk
-          ref: 75d50f2f44c80258c12b011b03a4d40b9fdce24d
+          ref: c1f7dc3edcaec3c009a6effb652496ef613f7689
           path: .sdk
       - uses: actions/setup-node@v4
         with:

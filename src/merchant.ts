@@ -17,6 +17,14 @@ export function coversNow(subscription: Pick<Subscription, 'currentPeriod'>, at 
   return !!subscription.currentPeriod && Date.parse(subscription.currentPeriod.startsAt) <= at && at < Date.parse(subscription.currentPeriod.endsAt);
 }
 
+const RENEWAL_GRACE_MS = 60_000;
+
+export function hasAccess(subscription: Pick<Subscription, 'currentPeriod' | 'renewalEnabled'>, at = Date.now()): boolean {
+  const period = subscription.currentPeriod;
+  return !!period && Date.parse(period.startsAt) <= at &&
+    at < Date.parse(period.endsAt) + (subscription.renewalEnabled === true ? RENEWAL_GRACE_MS : 0);
+}
+
 export function unixSeconds(value: string): string {
   return String(Math.floor(Date.parse(value) / 1000));
 }
@@ -52,19 +60,21 @@ export class Merchant {
     return null;
   }
 
-  async view(subscription: Subscription): Promise<SubscriptionView> {
+  async view(subscription: Subscription, at = Date.now()): Promise<SubscriptionView> {
     const plan = await this.api.getSubscriptionPlan(subscription.planId);
     const { record } = await this.api.getSubscriptionSetup(subscription.id);
     const latest = (await this.api.listSubscriptionPayments(subscription.id, { limit: 1 })).data[0] ?? null;
     return { subscription, plan, record, latest, renewalEnabled: subscription.renewalEnabled,
       paidThrough: record ? subscription.currentPeriod ? unixSeconds(subscription.currentPeriod.endsAt) : '0' : null,
-      accessPaid: record ? coversNow(subscription) : null };
+      accessPaid: record ? hasAccess(subscription, at) : null };
   }
 
   async currentView(wallet: string): Promise<SubscriptionView | null> {
     const records = await this.subscriptions(wallet);
-    const selected = records.find(subscription => coversNow(subscription)) ?? records[0];
-    return selected ? this.view(selected) : null;
+    const at = Date.now();
+    const selected = records.find(subscription => coversNow(subscription, at)) ??
+      records.find(subscription => hasAccess(subscription, at)) ?? records[0];
+    return selected ? this.view(selected, at) : null;
   }
 
   setup(wallet: string, planId: string) {
