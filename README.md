@@ -20,7 +20,7 @@ Use Node.js 22.18 or newer and MongoDB. Build the matching SDK from its public s
 
 ```sh
 git clone https://github.com/CNSLabs/agreements-api-sdk.git ../shodai-reference-sdk
-git -C ../shodai-reference-sdk checkout c1f7dc3edcaec3c009a6effb652496ef613f7689
+git -C ../shodai-reference-sdk checkout 2b2a7b560a34b47dd5361908d2328a0a958057cd
 npm --prefix ../shodai-reference-sdk/packages/agreements-api-client install --ignore-scripts --no-package-lock
 npm --prefix ../shodai-reference-sdk/packages/agreements-api-client run build
 npm pack ../shodai-reference-sdk/packages/agreements-api-client --pack-destination /tmp --ignore-scripts
