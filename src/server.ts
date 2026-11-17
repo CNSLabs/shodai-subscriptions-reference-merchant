@@ -4,11 +4,13 @@ import { Merchant } from './merchant.js';
 import { connectStore } from './store.js';
 
 const port = Number(process.env.PORT || 8787);
+const host = process.env.HOST || '127.0.0.1';
 const origin = process.env.PUBLIC_ORIGIN || `http://localhost:${port}`;
+const basePath = process.env.PUBLIC_BASE_PATH || '';
 const { store, client } = await connectStore(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017', process.env.MONGODB_DATABASE || 'shodai_customer_stack');
 const merchant = new Merchant(store);
-const server = createServer(createApp(merchant, origin));
-server.listen(port, '127.0.0.1', () => console.log(`Merchant listening at ${origin}`));
+const server = createServer(createApp(merchant, origin, basePath));
+server.listen(port, host, () => console.log(`Merchant listening at ${origin}${basePath}`));
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => { server.close(() => void client.close().then(() => process.exit(0))); });

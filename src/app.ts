@@ -10,9 +10,9 @@ import { formatUnits, getAddress, isAddress } from 'viem';
 import { coversNow, hasAccess, Merchant, type SubscriptionView } from './merchant.js';
 import { siwxExtension, verifyWalletProof } from './wallet-proof.js';
 
-async function sendRequired(response: Response, origin: string, merchant: Merchant, wallet?: string): Promise<void> {
-  const resource = origin + '/subscriber-resource';
-  const statusEndpoint = origin + '/subscriptions/status';
+async function sendRequired(response: Response, base: string, merchant: Merchant, wallet?: string): Promise<void> {
+  const resource = base + '/subscriber-resource';
+  const statusEndpoint = base + '/subscriptions/status';
   const plan = await merchant.offerPlan(wallet);
   if (plan && !/^eip155:[1-9]\d*$/.test(plan.network)) throw new Error('Unsupported Plan payment network');
   const required = {
@@ -23,7 +23,7 @@ async function sendRequired(response: Response, origin: string, merchant: Mercha
       payTo: plan.recipient, maxTimeoutSeconds: 600,
       extra: { version: '1', planId: plan.id, periodDuration: plan.periodSeconds,
         token: { symbol: 'ETH', decimals: 18, formattedAmount: formatUnits(BigInt(plan.amount), 18) },
-        agentWalletSetup: { endpoint: origin + '/subscriptions/agent-wallet/setup' }, statusEndpoint,
+        agentWalletSetup: { endpoint: base + '/subscriptions/agent-wallet/setup' }, statusEndpoint,
         cancellationPolicy: 'Cancel stops future renewals; paid access remains until expiry.',
         assetTransferMethod: 'default', paymentFlow: 'upfront' },
     }] : [],
@@ -41,29 +41,36 @@ function sendResource(response: Response, wallet: string, view: SubscriptionView
   response.json({ resource: 'Protected merchant subscriber resource', wallet, paidThrough: view.paidThrough });
 }
 
-export function createApp(merchant: Merchant, origin: string): Express {
+export function createApp(merchant: Merchant, origin: string, basePath = ''): Express {
   const url = new URL(origin);
   if (url.pathname !== '/' || url.username || url.password || url.hash || url.search ||
       (url.protocol !== 'https:' && !(['localhost', '127.0.0.1'].includes(url.hostname) && url.protocol === 'http:'))) {
     throw new Error('PUBLIC_ORIGIN must be an HTTPS origin or loopback development URL');
   }
+  if (!/^(\/[A-Za-z0-9._~-]+)*$/.test(basePath)) throw new Error('PUBLIC_BASE_PATH must be empty or a path such as /merchant, without a trailing slash');
   origin = url.origin;
-  const resource = origin + '/subscriber-resource';
+  const base = origin + basePath;
+  const resource = base + '/subscriber-resource';
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '64kb' }));
+  // Every route, including the dashboard, is served under the public base path so the merchant can share a host.
+  const routes = express.Router();
+  app.use(basePath || '/', routes);
+  routes.use(express.json({ limit: '64kb' }));
 
-  app.get('/subscriber-resource', async (request, response) => {
+  routes.get('/health', (_request, response) => { response.json({ status: 'ok' }); });
+
+  routes.get('/subscriber-resource', async (request, response) => {
     try {
       const proof = request.header('SIGN-IN-WITH-X');
-      if (!proof) return await sendRequired(response, origin, merchant);
+      if (!proof) return await sendRequired(response, base, merchant);
       const wallet = await verifyWalletProof(proof, resource);
       await merchant.store.customer(wallet);
       const view = await merchant.currentView(wallet);
       if (view?.accessPaid) return sendResource(response, wallet, view);
       if (view && hasAccess(view.subscription)) return response.status(403).json({ message: 'Product access is not available' });
       const header = request.header('PAYMENT-SIGNATURE');
-      if (!header) return await sendRequired(response, origin, merchant, wallet);
+      if (!header) return await sendRequired(response, base, merchant, wallet);
       let payment: ReturnType<typeof decodePaymentSignatureHeader>;
       try { payment = decodePaymentSignatureHeader(header); }
       catch { return response.status(400).json({ message: 'Invalid payment message' }); }
@@ -79,7 +86,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
           const current = await merchant.currentView(wallet);
           if (current?.accessPaid) return sendResource(response, wallet, current);
           if (current && hasAccess(current.subscription)) return response.status(403).json({ message: 'Product access is not available' });
-          return await sendRequired(response, origin, merchant, wallet);
+          return await sendRequired(response, base, merchant, wallet);
         }
         if (error instanceof AgreementsApiError && error.status === 400) return response.status(400).json({ message: error.message });
         throw error;
@@ -94,14 +101,14 @@ export function createApp(merchant: Merchant, origin: string): Express {
         return sendResource(response, wallet, after);
       }
       if (after && hasAccess(after.subscription)) return response.status(403).json({ message: 'Product access is not available' });
-      return await sendRequired(response, origin, merchant, wallet);
+      return await sendRequired(response, base, merchant, wallet);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Invalid or expired SIGN-IN-WITH-X')) return response.status(401).json({ message: error.message });
       return unavailable(response);
     }
   });
 
-  app.post('/subscriptions/agent-wallet/setup', async (request: Request, response: Response) => {
+  routes.post('/subscriptions/agent-wallet/setup', async (request: Request, response: Response) => {
     const proof = request.header('SIGN-IN-WITH-X');
     if (!proof) return response.status(401).json({ message: 'SIGN-IN-WITH-X is required' });
     try {
@@ -121,7 +128,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
     }
   });
 
-  app.get('/subscriptions/status', async (request, response) => {
+  routes.get('/subscriptions/status', async (request, response) => {
     const subscriber = request.query.subscriber;
     if (typeof subscriber !== 'string' || !isAddress(subscriber)) return response.status(400).json({ message: 'Invalid subscriber address' });
     try { return response.json(await merchant.status(getAddress(subscriber).toLowerCase())); }
@@ -147,9 +154,9 @@ export function createApp(merchant: Merchant, origin: string): Express {
     }
     next();
   };
-  app.use('/admin', operatorAuth);
-  app.use('/dashboard', operatorAuth);
-  app.use('/admin', (request, response, next) => {
+  routes.use('/admin', operatorAuth);
+  routes.use('/dashboard', operatorAuth);
+  routes.use('/admin', (request, response, next) => {
     if (request.method === 'PATCH' && request.header('origin') && request.header('origin') !== origin) {
       response.status(403).json({ message: 'Cross-origin edits are not allowed' });
       return;
@@ -157,7 +164,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
     next();
   });
 
-  app.get('/admin/customers', async (request, response) => {
+  routes.get('/admin/customers', async (request, response) => {
     const query = typeof request.query.search === 'string' ? request.query.search.trim().toLowerCase() : '';
     if (query.length > 80) return response.status(400).json({ message: 'Search is too long' });
     try {
@@ -175,7 +182,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
     } catch { return unavailable(response); }
   });
 
-  app.get('/admin/customers/:wallet', async (request, response) => {
+  routes.get('/admin/customers/:wallet', async (request, response) => {
     if (!isAddress(request.params.wallet)) return response.status(400).json({ message: 'Invalid wallet' });
     const wallet = getAddress(request.params.wallet).toLowerCase();
     try {
@@ -196,7 +203,7 @@ export function createApp(merchant: Merchant, origin: string): Express {
     } catch { return unavailable(response); }
   });
 
-  app.patch('/admin/customers/:wallet', async (request, response) => {
+  routes.patch('/admin/customers/:wallet', async (request, response) => {
     if (!isAddress(request.params.wallet)) return response.status(400).json({ message: 'Invalid wallet' });
     if (!request.body || Object.keys(request.body).length !== 1 || typeof request.body.note !== 'string' || request.body.note.length > 2000) {
       return response.status(400).json({ message: 'Only a note of at most 2000 characters may be edited' });
@@ -206,7 +213,13 @@ export function createApp(merchant: Merchant, origin: string): Express {
     return result ? response.json({ wallet, note: result.note }) : response.status(404).json({ message: 'Customer not found' });
   });
 
-  app.use('/dashboard', express.static(fileURLToPath(new URL('../public', import.meta.url)), { index: 'index.html' }));
+  // The dashboard's asset and API paths are relative, so they resolve under the base path only from a trailing-slash URL.
+  routes.use('/dashboard', (request, response, next) => {
+    const [path, query] = request.originalUrl.split(/\?(.*)/s);
+    if (request.path !== '/' || path.endsWith('/')) return next();
+    response.redirect(`${basePath}/dashboard/${query ? `?${query}` : ''}`);
+  });
+  routes.use('/dashboard', express.static(fileURLToPath(new URL('../public', import.meta.url)), { index: 'index.html' }));
 
   return app;
 }

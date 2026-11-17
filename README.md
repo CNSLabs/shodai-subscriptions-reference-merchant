@@ -11,6 +11,9 @@ After a confirmed first payment, resource access continues for 60 seconds beyond
 - `GET /subscriptions/status` reads subscription facts and stored setup references.
 - `/admin/customers` and `/admin/customers/:wallet` provide authenticated customer records and notes.
 - `/dashboard` is the merchant operator UI.
+- `GET /health` reports that the server is running, without calling Shodai or MongoDB.
+
+Every path is served under `PUBLIC_BASE_PATH` when one is set.
 
 The [MetaMask Agent Wallet subscription plugin](https://github.com/CNSLabs/shodai-subscriptions-agent-wallet-plugin/tree/subscriptions-service-wallet) authenticates, verifies deployed terms, installs the buyer's bounded payment permission, and cancels directly through the Agreement. The merchant needs a Shodai account API key with `subscriptions.read` and `subscriptions.write`.
 
@@ -40,7 +43,9 @@ Copy `.env.example` to `.env` and configure:
 | `SUBSCRIPTION_PLAN_IDS` | Comma-separated registered Plan IDs applicable to the resource, including earlier Plans whose subscriptions still grant access. |
 | `MONGODB_URI`, `MONGODB_DATABASE` | Merchant customer and notes database. |
 | `PORT` | Local listening port; defaults to `8787`. |
+| `HOST` | Listening address; defaults to `127.0.0.1`. The container image uses `0.0.0.0`. |
 | `PUBLIC_ORIGIN` | Externally reachable HTTPS origin, or the loopback HTTP origin for local development. |
+| `PUBLIC_BASE_PATH` | Optional path prefix, such as `/subscription-merchant`, when the merchant shares a host with other services. |
 | `OPERATOR_PASSWORD` | Dashboard password, at least 24 characters. The dashboard username is `operator`. |
 
 Register the applicable Plans through Shodai before starting the merchant. The merchant loads their terms through the SDK. Keep your API key and operator password in the ignored `.env` file or supply the existing `SHODAI_API_KEY_FILE` and `OPERATOR_PASSWORD_FILE` options.
@@ -52,6 +57,16 @@ npm start
 ```
 
 The server listens on `127.0.0.1:8787` by default. Open `http://localhost:8787/dashboard` for customer records and notes. Give the buyer's agent the protected resource URL to discover subscription terms through the plugin.
+
+## Container
+
+The `Dockerfile` builds the pinned SDK from source and runs the server on port `8787`. Supply the same variables at runtime, with `PUBLIC_ORIGIN` set to the public HTTPS origin:
+
+```sh
+docker build -t shodai-subscription-merchant .
+```
+
+The image trusts the Amazon RDS certificate authority, so `MONGODB_URI` can point at Amazon DocumentDB with `tls=true`.
 
 ## Adapt the example
 

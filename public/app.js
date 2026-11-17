@@ -68,7 +68,7 @@ async function listData() {
   const message = main.querySelector('#list-message');
   if (!main.querySelector('#rows').children.length) { message.hidden = false; message.textContent = 'Loading customers...'; }
   try {
-    const data = await read(`/admin/customers?search=${encodeURIComponent(query().get('q') || '')}`);
+    const data = await read(`../admin/customers?search=${encodeURIComponent(query().get('q') || '')}`);
     if (number !== state.request || state.wallet) return;
     const rows = sorted(data.customers);
     main.querySelector('#rows').innerHTML = rows.map(row => `<tr data-wallet="${escapeHtml(row.wallet)}">
@@ -109,7 +109,7 @@ function detailShell(wallet) {
     const button = main.querySelector('#save-note'); button.disabled = true;
     const note = main.querySelector('#note').value;
     try {
-      await read(`/admin/customers/${wallet}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }) });
+      await read(`../admin/customers/${wallet}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }) });
       state.noteDirty = false; main.querySelector('#note-status').textContent = 'Saved';
       await detailData(wallet);
     } catch (error) { main.querySelector('#note-status').textContent = error.message; }
@@ -120,7 +120,7 @@ function detailShell(wallet) {
 async function detailData(wallet) {
   const number = ++state.request;
   try {
-    const data = await read(`/admin/customers/${wallet}`);
+    const data = await read(`../admin/customers/${wallet}`);
     if (number !== state.request || state.wallet !== wallet) return;
     const message = main.querySelector('#detail-message'); message.hidden = true;
     main.querySelector('#detail-content').hidden = false;
