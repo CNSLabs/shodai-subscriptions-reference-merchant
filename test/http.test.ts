@@ -343,3 +343,37 @@ test('operator views expose public records and retain notes-only editing and aut
   assert.equal((await fetch(path, { method: 'PATCH', headers: { authorization, 'content-type': 'application/json' }, body: JSON.stringify({ note: 'Follow up' }) })).status, 200);
   assert.equal((await store.customers.findOne({ _id: wallet.address.toLowerCase() }))?.note, 'Follow up');
 });
+
+test('a public base path prefixes the offer, setup, status, health and dashboard routes', async () => {
+  assert.throws(() => createApp(merchant, origin, '/merchant/'), /PUBLIC_BASE_PATH/);
+  const outer = express(), hosted = createServer(outer);
+  await new Promise<void>(resolve => hosted.listen(0, '127.0.0.1', resolve));
+  const hostedOrigin = 'http://127.0.0.1:' + (hosted.address() as { port: number }).port;
+  const base = hostedOrigin + '/merchant';
+  outer.use(createApp(merchant, hostedOrigin, '/merchant'));
+  try {
+    assert.deepEqual(await (await fetch(base + '/health')).json(), { status: 'ok' });
+    assert.equal((await fetch(hostedOrigin + '/subscriber-resource')).status, 404);
+    const offer = await fetch(base + '/subscriber-resource');
+    assert.equal(offer.status, 402);
+    const required = decodePaymentRequiredHeader(offer.headers.get('payment-required')!);
+    assert.equal(required.resource.url, base + '/subscriber-resource');
+    assert.equal((required.accepts[0].extra?.agentWalletSetup as { endpoint: string }).endpoint, base + '/subscriptions/agent-wallet/setup');
+    assert.equal((required.extensions!['shodai-subscription'] as { statusEndpoint: string }).statusEndpoint, base + '/subscriptions/status');
+    const extension = required.extensions!['sign-in-with-x'] as SIWxExtension;
+    const payload = await createSIWxPayload({ ...extension.info, ...extension.supportedChains[0] },
+      { address: wallet.address, signMessage: ({ message }: { message: string }) => wallet.signMessage({ message }) }, base + '/subscriber-resource');
+    const setupResponse = await fetch(base + '/subscriptions/agent-wallet/setup', { method: 'POST',
+      headers: { 'content-type': 'application/json', 'SIGN-IN-WITH-X': encodeSIWxHeader(payload) }, body: JSON.stringify({ planId: 'P', agentWallet: wallet.address }) });
+    assert.equal(setupResponse.status, 201);
+    const status = await (await fetch(base + '/subscriptions/status?subscriber=' + wallet.address)).json();
+    assert.equal(status.subscription.id, (await setupResponse.json()).record.id);
+    const authorization = 'Basic ' + Buffer.from('operator:' + process.env.OPERATOR_PASSWORD).toString('base64');
+    const redirect = await fetch(base + '/dashboard?wallet=' + wallet.address, { headers: { authorization }, redirect: 'manual' });
+    assert.equal(redirect.status, 302);
+    assert.equal(redirect.headers.get('location'), '/merchant/dashboard/?wallet=' + wallet.address);
+    const page = await (await fetch(base + '/dashboard/', { headers: { authorization } })).text();
+    assert.match(page, /src="app\.js"/);
+    assert.equal((await fetch(base + '/admin/customers', { headers: { authorization } })).status, 200);
+  } finally { await new Promise<void>(resolve => hosted.close(() => resolve())); }
+});
